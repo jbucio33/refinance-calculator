@@ -1,6 +1,25 @@
-module.exports = {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
+{
+  "name": "provisor-refi-calculator",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
   },
-};
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "2.12.7"
+  },
+  "devDependencies": {
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.41",
+    "tailwindcss": "3.4.10",
+    "eslint": "8.57.0",
+    "eslint-config-next": "14.2.5"
+  }
+}

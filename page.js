@@ -1,10 +1,16 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+import "./globals.css";
 
-/* Print styling */
-@media print {
-  body { background: white; }
-  button { display: none !important; }
-  input[type="range"] { display: none !important; }
+export const metadata = {
+  title: "Mortgage Refinance Calculator",
+  description: "Compare current mortgage vs refinance options",
+};
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body className="bg-gray-50 text-gray-900">
+        {children}
+      </body>
+    </html>
+  );
 }

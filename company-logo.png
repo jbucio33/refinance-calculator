@@ -1,16 +1,601 @@
-import "./globals.css";
+import React, { useMemo, useRef, useState } from "react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  Cell,
+} from "recharts";
 
-export const metadata = {
-  title: "Mortgage Refinance Calculator",
-  description: "Compare current mortgage vs refinance options",
+/**
+ * Portable (zero-setup) version:
+ * - No shadcn/ui imports
+ * - Uses plain HTML + Tailwind classes
+ * - Works great in CodeSandbox Next.js template
+ */
+
+function Card({ className = "", children }) {
+  return (
+    <div className={`bg-white rounded-2xl shadow ${className}`.trim()}>
+      {children}
+    </div>
+  );
+}
+
+function CardContent({ className = "", children }) {
+  return <div className={className}>{children}</div>;
+}
+
+function Label({ children }) {
+  return <label className="text-sm font-medium text-gray-700">{children}</label>;
+}
+
+function Input(props) {
+  const { className = "", ...rest } = props;
+  return (
+    <input
+      className={`mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-200 ${className}`.trim()}
+      {...rest}
+    />
+  );
+}
+
+function Button({ className = "", children, ...rest }) {
+  return (
+    <button
+      className={`rounded-xl px-4 py-2 text-sm font-semibold shadow-sm border border-gray-200 bg-white hover:bg-gray-50 active:bg-gray-100 ${className}`.trim()}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Switch({ checked, onCheckedChange }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onCheckedChange(!checked)}
+      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+        checked ? "bg-green-500" : "bg-gray-300"
+      }`}
+      aria-pressed={checked}
+    >
+      <span
+        className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+          checked ? "translate-x-5" : "translate-x-1"
+        }`}
+      />
+    </button>
+  );
+}
+
+const FIELD_LABELS = {
+  propertyValue: "Property Value",
+  originalBalance: "Original Loan Amount",
+  currentBalance: "Current Balance",
+  rate: "Interest Rate (%)",
+  term: "Loan Term (Years)",
+  yearsPaid: "Years Already Paid",
+  taxes: "Property Taxes",
+  insurance: "Home Insurance",
+  PMI: "Monthly PMI",
+  closingCosts: "Closing Costs",
+  prepaidItems: "Prepaid Items",
+  rollClosingCosts: "Add Costs and Prepaid Items to Loan",
+  cashOut: "Cash-Out Amount",
 };
 
-export default function RootLayout({ children }) {
+function labelForKey(key) {
+  return FIELD_LABELS[key] || key;
+}
+
+function calculateMonthlyPayment(principal, annualRate, years) {
+  const monthlyRate = annualRate / 100 / 12;
+  const totalPayments = years * 12;
+  if (totalPayments === 0) return 0;
+  if (monthlyRate === 0) return principal / totalPayments;
+  return (principal * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -totalPayments));
+}
+
+function calculateRemainingBalance(principal, annualRate, years, paymentsMade) {
+  const monthlyRate = annualRate / 100 / 12;
+  const monthlyPayment = calculateMonthlyPayment(principal, annualRate, years);
+
+  if (monthlyRate === 0) {
+    return Math.max(0, principal - monthlyPayment * paymentsMade);
+  }
+
+  const balance =
+    principal * Math.pow(1 + monthlyRate, paymentsMade) -
+    (monthlyPayment * (Math.pow(1 + monthlyRate, paymentsMade) - 1)) / monthlyRate;
+
+  return Math.max(0, balance);
+}
+
+function calculateInterestOverMonths(principal, rate, months) {
+  const monthlyRate = rate / 100 / 12;
+  const years = months / 12;
+  const payment = calculateMonthlyPayment(principal, rate, years);
+  let balance = principal;
+  let totalInterest = 0;
+
+  for (let i = 0; i < months; i++) {
+    if (balance <= 0) break;
+    const interest = balance * monthlyRate;
+    totalInterest += interest;
+    balance -= payment - interest;
+  }
+
+  return totalInterest;
+}
+
+export default function MortgageRefinanceCalculator() {
+  const printRef = useRef(null);
+
+  const [cashOutEnabled, setCashOutEnabled] = useState(false);
+  const [headshotError, setHeadshotError] = useState(false);
+  const [logoError, setLogoError] = useState(false);
+  const [timeInHome, setTimeInHome] = useState(10);
+
+  const [currentLoan, setCurrentLoan] = useState({
+    propertyValue: 500000,
+    originalBalance: 300000,
+    currentBalance: 275000,
+    rate: 6.875,
+    term: 30,
+    yearsPaid: 2,
+    taxes: 300,
+    insurance: 125,
+    PMI: 0,
+  });
+
+  const [option1, setOption1] = useState({
+    rate: 5.5,
+    term: 30,
+    closingCosts: 9000,
+    prepaidItems: 1500,
+    rollClosingCosts: true,
+    cashOut: 0,
+    taxes: 300,
+    insurance: 125,
+    PMI: 0,
+  });
+
+  const [option2, setOption2] = useState({
+    rate: 6.125,
+    term: 30,
+    closingCosts: 3000,
+    prepaidItems: 1500,
+    rollClosingCosts: true,
+    cashOut: 0,
+    taxes: 300,
+    insurance: 125,
+    PMI: 0,
+  });
+
+  const [option3, setOption3] = useState({
+    rate: 6.5,
+    term: 30,
+    closingCosts: 0,
+    prepaidItems: 1500,
+    rollClosingCosts: true,
+    cashOut: 0,
+    taxes: 300,
+    insurance: 125,
+    PMI: 0,
+  });
+
+  const paymentsMade = currentLoan.yearsPaid * 12;
+
+  const remainingBalance = useMemo(() => {
+    const manual = Number(currentLoan.currentBalance);
+    if (Number.isFinite(manual) && manual > 0) return manual;
+
+    return calculateRemainingBalance(
+      currentLoan.originalBalance,
+      currentLoan.rate,
+      currentLoan.term,
+      paymentsMade
+    );
+  }, [currentLoan, paymentsMade]);
+
+  const remainingYears = Math.max(0, currentLoan.term - currentLoan.yearsPaid);
+  const monthsPlanned = timeInHome * 12;
+
+  const currentPrincipalInterest = useMemo(() => {
+    if (remainingYears === 0) return 0;
+    return calculateMonthlyPayment(remainingBalance, currentLoan.rate, remainingYears);
+  }, [remainingBalance, currentLoan.rate, remainingYears]);
+
+  const currentTotalMonthly =
+    currentPrincipalInterest + currentLoan.taxes + currentLoan.insurance + currentLoan.PMI;
+
+  const currentInterestPlanned = useMemo(() => {
+    return calculateInterestOverMonths(
+      remainingBalance,
+      currentLoan.rate,
+      Math.min(monthsPlanned, remainingYears * 12)
+    );
+  }, [remainingBalance, currentLoan.rate, monthsPlanned, remainingYears]);
+
+  function calculateOption(option) {
+    const basePrincipal = remainingBalance + (cashOutEnabled ? option.cashOut : 0);
+    const newPrincipal =
+      basePrincipal +
+      (option.rollClosingCosts ? option.closingCosts + (option.prepaidItems || 0) : 0);
+
+    const principalInterest = calculateMonthlyPayment(newPrincipal, option.rate, option.term);
+
+    const totalMonthly = principalInterest + option.taxes + option.insurance + option.PMI;
+
+    const interestPlanned = calculateInterestOverMonths(
+      newPrincipal,
+      option.rate,
+      Math.min(monthsPlanned, option.term * 12)
+    );
+
+    const monthlySavings = currentTotalMonthly - totalMonthly;
+
+    const lifetimeSavings =
+      currentInterestPlanned -
+      interestPlanned -
+      (option.rollClosingCosts ? 0 : option.closingCosts + (option.prepaidItems || 0));
+
+    return {
+      principalInterest,
+      totalMonthly,
+      interestPlanned,
+      monthlySavings,
+      lifetimeSavings,
+      newPrincipal,
+    };
+  }
+
+  const option1Results = calculateOption(option1);
+  const option2Results = calculateOption(option2);
+  const option3Results = calculateOption(option3);
+
+  const bestOption = (() => {
+    const candidates = [
+      { name: "Option 1", results: option1Results },
+      { name: "Option 2", results: option2Results },
+      { name: "Option 3", results: option3Results },
+    ];
+    candidates.sort((a, b) => b.results.lifetimeSavings - a.results.lifetimeSavings);
+    return candidates[0].name;
+  })();
+
+  const chartData = [
+    { name: "Current Mortgage", Interest: currentInterestPlanned },
+    { name: "Option 1", Interest: option1Results.interestPlanned },
+    { name: "Option 2", Interest: option2Results.interestPlanned },
+    { name: "Option 3", Interest: option3Results.interestPlanned },
+  ];
+
+  const handlePrint = () => window.print();
+
+  const ranked = [
+    { name: "Option 1", results: option1Results },
+    { name: "Option 2", results: option2Results },
+    { name: "Option 3", results: option3Results },
+  ].sort((a, b) => b.results.lifetimeSavings - a.results.lifetimeSavings);
+
+  const bestResults = ranked[0].results;
+  const runnerUpResults = ranked[1]?.results;
+  const bestDeltaLifetime = runnerUpResults
+    ? bestResults.lifetimeSavings - runnerUpResults.lifetimeSavings
+    : bestResults.lifetimeSavings;
+
+  const recommendationTitle =
+    bestResults.lifetimeSavings > 0 ? `Recommendation: ${bestOption}` : "Recommendation: Keep Current Mortgage";
+
+  const recommendationBadge = bestResults.lifetimeSavings > 0 ? "Recommended" : "Not Beneficial";
+
+  const recommendationNotes = (() => {
+    const notes = [];
+
+    if (bestResults.lifetimeSavings <= 0) {
+      notes.push("Based on your time-in-home and inputs, refinancing does not appear to reduce total cost.");
+      if (bestResults.monthlySavings > 0) {
+        notes.push("You may still see monthly payment relief, but overall cost may increase due to interest/term/closing costs.");
+      }
+      return notes;
+    }
+
+    notes.push(
+      `Estimated total savings over ${timeInHome} years: $${bestResults.lifetimeSavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}.`
+    );
+
+    notes.push(
+      `Estimated monthly savings: $${bestResults.monthlySavings.toFixed(2)} (including Property Taxes, Home Insurance, and PMI).`
+    );
+
+    if (cashOutEnabled) {
+      notes.push("Cash-Out is enabled: savings and payments include the cash-out amount (and costs/prepaids added to loan if selected).");
+    } else {
+      notes.push("Cash-Out is off: comparison is rate/term only (costs/prepaids may be added to the loan if selected).");
+    }
+
+    notes.push(
+      `This option outperforms the next-best option by about $${bestDeltaLifetime.toLocaleString(undefined, { maximumFractionDigits: 0 })} over your time horizon.`
+    );
+
+    return notes;
+  })();
+
+  const renderLoanInputs = (title, state, setState) => (
+    <Card className="border border-gray-100">
+      <CardContent className="p-4 sm:p-6 space-y-4">
+        <h2 className="text-xl font-semibold">{title}</h2>
+        {Object.entries(state).map(([key, value]) => (
+          <div key={key}>
+            {typeof value === "boolean" ? (
+              <div className="flex items-center justify-between gap-3">
+                <Label>{labelForKey(key)}</Label>
+                <Switch
+                  checked={value}
+                  onCheckedChange={(checked) =>
+                    setState({
+                      ...state,
+                      [key]: checked,
+                    })
+                  }
+                />
+              </div>
+            ) : (
+              <>
+                <Label>{labelForKey(key)}</Label>
+                <Input
+                  type="number"
+                  value={Number.isFinite(value) ? value : 0}
+                  onChange={(e) =>
+                    setState({
+                      ...state,
+                      [key]: parseFloat(e.target.value || "0"),
+                    })
+                  }
+                />
+              </>
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+
+  const renderCurrentResults = () => (
+    <Card className="border-2 border-blue-500">
+      <CardContent className="p-4 sm:p-6 space-y-4 text-center">
+        <h3 className="text-lg font-semibold">Current Loan (If You Stay)</h3>
+        <div>
+          <p className="text-sm text-gray-500">Loan Amount</p>
+          <p className="text-xl font-bold">
+            ${remainingBalance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">Total Monthly Payment</p>
+          <p className="text-2xl font-bold">${currentTotalMonthly.toFixed(2)}</p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">Interest Paid (Time in Home)</p>
+          <p className="text-xl font-bold">
+            ${currentInterestPlanned.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">Projected Savings</p>
+          <p className="text-xl font-bold">$0</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  const renderResults = (title, results, isBest) => (
+    <Card className={`border-2 ${isBest ? "border-green-500" : "border-transparent"}`}>
+      <CardContent className="p-4 sm:p-6 space-y-4 text-center">
+        <h3 className="text-lg font-semibold">
+          {title} {isBest && "🏆 Best Option"}
+        </h3>
+        <div>
+          <p className="text-sm text-gray-500">Loan Amount</p>
+          <p className="text-xl font-bold">
+            ${results.newPrincipal.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">Total Monthly Payment</p>
+          <p className="text-2xl font-bold">${results.totalMonthly.toFixed(2)}</p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">Interest Paid (Time in Home)</p>
+          <p className="text-xl font-bold">
+            ${results.interestPlanned.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">Monthly Savings</p>
+          <p className={`text-2xl font-bold ${results.monthlySavings >= 0 ? "text-green-600" : "text-red-600"}`}>
+            ${results.monthlySavings.toFixed(2)}
+          </p>
+        </div>
+        <div>
+          <p className="text-sm text-gray-500">Total Savings (Time in Home)</p>
+          <p className="text-xl font-bold">
+            ${results.lifetimeSavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   return (
-    <html lang="en">
-      <body className="bg-gray-50 text-gray-900">
-        {children}
-      </body>
-    </html>
+    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6 sm:space-y-8" ref={printRef}>
+      {/* Header */}
+      <div className="bg-white rounded-2xl shadow-md p-4 sm:p-6 flex flex-col sm:flex-row items-center sm:items-start gap-4 sm:gap-6">
+        {!logoError ? (
+          <img
+            src="/company-logo.png"
+            alt="Provisor"
+            className="h-12 sm:h-16 object-contain"
+            onError={() => setLogoError(true)}
+          />
+        ) : (
+          <div className="h-12 sm:h-16 px-4 rounded-xl border flex items-center text-sm font-semibold text-gray-700">
+            Provisor
+          </div>
+        )}
+
+        {!headshotError ? (
+          <img
+            src="/joshua-bucio-headshot.jpg"
+            alt="Joshua Bucio"
+            className="h-24 w-24 sm:h-28 sm:w-28 rounded-full object-cover border-4 border-gray-200"
+            onError={() => setHeadshotError(true)}
+          />
+        ) : (
+          <div className="h-24 w-24 sm:h-28 sm:w-28 rounded-full border-4 border-gray-200 flex items-center justify-center bg-gray-100 text-gray-700 font-bold text-2xl">
+            JB
+          </div>
+        )}
+
+        <div className="text-center sm:text-left">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Joshua Bucio</h1>
+          <p className="text-gray-600">Senior Loan Officer | Provisor</p>
+          <p className="text-gray-600">NMLS #286333</p>
+          <p className="text-gray-800 font-medium mt-2">414-305-1844</p>
+          <p className="text-gray-800">Joshua@provisor.com</p>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="flex flex-col sm:flex-row sm:items-end gap-4 sm:gap-6">
+        <div className="flex items-center justify-between sm:justify-start gap-4 w-full sm:w-auto">
+          <Label>Enable Cash-Out</Label>
+          <Switch checked={cashOutEnabled} onCheckedChange={setCashOutEnabled} />
+        </div>
+
+        <div className="flex flex-col w-full sm:w-80">
+          <Label>Years Planning to Stay: {timeInHome}</Label>
+          <input
+            type="range"
+            min="1"
+            max="30"
+            value={timeInHome}
+            onChange={(e) => setTimeInHome(parseInt(e.target.value, 10))}
+          />
+        </div>
+
+        <Button className="w-full sm:w-auto" onClick={handlePrint}>
+          Print / Save as PDF
+        </Button>
+      </div>
+
+      {/* Recommendation */}
+      <Card className="border-2 border-gray-200">
+        <CardContent className="p-4 sm:p-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold">{recommendationTitle}</h2>
+              <p className="text-sm text-gray-500">Based on your inputs and planned time in home.</p>
+            </div>
+            <div
+              className={`px-3 py-1 rounded-full text-sm font-semibold w-fit ${
+                bestResults.lifetimeSavings > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
+              }`}
+            >
+              {recommendationBadge}
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="rounded-xl border p-4">
+              <p className="text-sm text-gray-500">Planned Time in Home</p>
+              <p className="text-2xl font-bold">{timeInHome} yrs</p>
+            </div>
+            <div className="rounded-xl border p-4">
+              <p className="text-sm text-gray-500">Monthly Savings</p>
+              <p className={`text-2xl font-bold ${bestResults.monthlySavings >= 0 ? "text-green-600" : "text-red-600"}`}>
+                ${bestResults.monthlySavings.toFixed(2)}
+              </p>
+            </div>
+            <div className="rounded-xl border p-4">
+              <p className="text-sm text-gray-500">Total Savings (Time in Home)</p>
+              <p className={`text-2xl font-bold ${bestResults.lifetimeSavings >= 0 ? "text-green-600" : "text-red-600"}`}>
+                ${bestResults.lifetimeSavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </p>
+            </div>
+          </div>
+
+          <ul className="mt-4 space-y-2 text-sm">
+            {recommendationNotes.map((n, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="mt-0.5">•</span>
+                <span>{n}</span>
+              </li>
+            ))}
+          </ul>
+
+          <p className="mt-4 text-xs text-gray-500">
+            Note: This calculator provides estimates for planning purposes and does not constitute a loan approval or final pricing.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Inputs */}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
+        {renderLoanInputs("Current Loan", currentLoan, setCurrentLoan)}
+        {renderLoanInputs("Refinance Option 1", option1, setOption1)}
+        {renderLoanInputs("Refinance Option 2", option2, setOption2)}
+        {renderLoanInputs("Refinance Option 3", option3, setOption3)}
+      </div>
+
+      {/* Results */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        {renderCurrentResults()}
+        {renderResults("Option 1", option1Results, bestOption === "Option 1")}
+        {renderResults("Option 2", option2Results, bestOption === "Option 2")}
+        {renderResults("Option 3", option3Results, bestOption === "Option 3")}
+      </div>
+
+      {/* Chart */}
+      <Card>
+        <CardContent className="p-4 sm:p-6">
+          <h3 className="text-lg font-semibold mb-4">Interest Paid Comparison (Based on Time in Home)</h3>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={chartData}>
+              <XAxis dataKey="name" />
+              <YAxis />
+              <Tooltip
+                formatter={(value) =>
+                  `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                }
+              />
+              <Legend />
+              <Bar dataKey="Interest">
+                {chartData.map((entry, index) => (
+                  <Cell
+                    key={`cell-${index}`}
+                    fill={entry.name === "Current Mortgage" ? "#ef4444" : "#22c55e"}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Disclaimer */}
+      <div className="pt-2">
+        <p className="text-xs text-gray-500">
+          Disclaimer: These numbers are estimates and may change daily based on market conditions.
+          Please request and review a Loan Estimate for your actual interest rate and APR.
+        </p>
+      </div>
+    </div>
   );
 }
