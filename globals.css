@@ -1,0 +1,16 @@
+# Provisor Mortgage Refinance Calculator
+
+## Run locally
+1. Install Node.js (LTS)
+2. In this folder:
+   - npm install
+   - npm run dev
+3. Open http://localhost:3000
+
+## Images
+Put these in /public (already included if you used the provided files):
+- company-logo.png
+- joshua-bucio-headshot.jpg
+
+## Deploy (easy)
+- Upload this project to GitHub, then import into Vercel.
